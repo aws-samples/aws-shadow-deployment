@@ -31,7 +31,7 @@ Cons:
 
 ### Setup
 
-Execute the command in code repo root directory 
+Execute the command in code repo root directory (```cd aws-shadow-deployment``` after git clone this repo to local)
 
 - Update update ```Email Defualt value``` in [template.yaml](template.yaml) used to receive manual approval request and you should receive a SNS Topic Subscription Email after you Deploy SAM Template
 
