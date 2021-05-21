@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Resources:
+  CodeRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties: 
+      Code: 
+        BranchName: master
+        S3: 
+            Bucket: "{{resolve:ssm:code-bucket:1}}"
+            Key: code.zip
+      RepositoryName: shadow-deployment
+
+  CodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties: 
+      Artifacts: 
+          Type: CODEPIPELINE
+      LogsConfig: 
+          CloudWatchLogs: 
+              Status: ENABLED
+      Name: Deploy
+      ServiceRole: !GetAtt BuildRole.Arn
+      Source: 
+          BuildSpec: buildspec.yml
+          Type: CODEPIPELINE
+      TimeoutInMinutes: 60
+      Environment:
+          ComputeType: BUILD_GENERAL1_SMALL
+          Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+          ImagePullCredentialsType: CODEBUILD
+          PrivilegedMode: True
+          Type: LINUX_CONTAINER
+          EnvironmentVariables: 
+            -   Name: BUCKET
+                Type: PLAINTEXT
+                Value: "{{resolve:ssm:code-bucket:1}}"
+
+  CodePipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties: 
+      ArtifactStore: 
+          Location: "{{resolve:ssm:code-bucket:1}}"
+          Type: S3
+      Name: shadow-deploy-cicd
+      RoleArn: !GetAtt PipelineRole.Arn
+      Stages: 
+        - Name: Source
+          Actions: 
+            - ActionTypeId: 
+                Category: Source
+                Owner: AWS
+                Version: '1'
+                Provider: CodeCommit
+              Configuration:
+                BranchName: master
+                RepositoryName: !GetAtt CodeRepo.Name
+              Name: Source
+              OutputArtifacts: 
+                - Name: SourceOutput
+              RunOrder: 1
+        - Name: Deploy
+          Actions: 
+            - ActionTypeId: 
+                Category: Build
+                Owner: AWS
+                Version: '1'
+                Provider: CodeBuild
+              Configuration:
+                ProjectName: !Ref CodeBuild
+                PrimarySource: SourceOutput
+              InputArtifacts:
+                - Name: SourceOutput
+              Name: Build
+              RunOrder: 1
+
+  BuildRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "codebuild.amazonaws.com"
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - codebuild:*
+                  - sagemaker:*
+                  - sns:*
+                  - sqs:*
+                  - lambda:*
+                  - dynamodb:*
+                  - iam:*
+                  - apigateway:*
+                  - states:*
+                  - s3:*
+                  - ssm:*
+                  - cloudformation:*
+                  - logs:*
+                  - events:*
+                Resource: '*'
+      Path: "/"
+      RoleName: CodeBuildRole
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service: "codepipeline.amazonaws.com"
+            Action:
+              - sts:AssumeRole  
+      Policies:
+        - PolicyName: root
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - iam:PassRole
+                  - codecommit:*
+                  - codedeploy:*
+                  - codestar-connections:UseConnection
+                  - elasticbeanstalk:*
+                  - ec2:*
+                  - elasticloadbalancing:*
+                  - autoscaling:*
+                  - cloudwatch:*
+                  - s3:*
+                  - sns:*
+                  - cloudformation:*
+                  - rds:*
+                  - sqs:*
+                  - ecs:*
+                  - lambda:InvokeFunction
+                  - lambda:ListFunctions
+                  - opsworks:*
+                  - codebuild:*
+                  - devicefarm:*
+                  - servicecatalog:*
+                  - ecr:DescribeImages
+                  - states:*
+                  - appconfig:*
+                Resource: '*'
+      Path: "/"
+      RoleName: CodePipelineRole

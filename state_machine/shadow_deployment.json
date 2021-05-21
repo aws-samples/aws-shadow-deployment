@@ -1,0 +1,147 @@
+
+{
+  "Comment": "A State Machine to deploy new model, compare two models' performance and implement shadow deployment",
+  "StartAt": "Create New Model",
+  "States": {
+    "Create New Model": {
+      "Parameters": {
+        "PrimaryContainer": {
+          "Image": "${XGBoostImage}",
+          "ModelDataUrl.$": "$.model_path"
+        },
+        "ExecutionRoleArn": "${SageMakerExecutionRole}",
+        "ModelName.$": "$.job_name"
+      },
+      "Resource": "arn:aws:states:::sagemaker:createModel",
+      "InputPath": "$",
+      "ResultPath": "$.model",
+      "Type": "Task",
+      "Next": "Create New Endpoint Config"
+    },
+    "Create New Endpoint Config": {
+      "Parameters": {
+        "EndpointConfigName.$": "$.job_name",
+        "ProductionVariants": [
+          {
+            "InitialInstanceCount": 1,
+            "InitialVariantWeight": 1,
+            "InstanceType": "ml.m5.xlarge",
+            "ModelName.$": "$.job_name",
+            "VariantName": "xgboost"
+          }
+        ]
+      },
+      "Resource": "arn:aws:states:::sagemaker:createEndpointConfig",
+      "InputPath": "$",
+      "ResultPath": "$.endpointconfig",
+      "Type": "Task",
+      "Next": "Create New Endpoint"
+    },
+    "Create New Endpoint": {
+      "Parameters": {
+        "EndpointConfigName.$": "$.job_name",
+        "EndpointName.$": "$.job_name"
+      },
+      "Resource": "arn:aws:states:::sagemaker:createEndpoint",
+      "InputPath": "$",
+      "ResultPath": "$.endpoint",
+      "Type": "Task",
+      "Next": "Wait for Endpoint Creation Completed"
+    },
+    "Wait for Endpoint Creation Completed": {
+      "Type": "Wait",
+      "Seconds": 300,
+      "Next": "Check Endpoint Creating Status"
+    },
+    "Check Endpoint Creating Status": {
+      "Resource": "${EndpointStatusCheckLambda}",
+      "Type": "Task",
+      "Next": "Status Choice",
+      "InputPath": "$",
+      "ResultPath": "$.endpoint_status"
+    },
+    "Status Choice":{
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.endpoint_status",
+          "StringEquals": "InService",
+          "Next": "Send Traffic to Shadow Endpoint"
+        },
+        {
+          "Variable": "$.endpoint_status",
+          "StringEquals": "Creating",
+          "Next": "Wait for Endpoint Creation Completed"
+        }
+      ],
+      "Default": "Fail"
+    },
+    "Send Traffic to Shadow Endpoint": {
+      "Resource": "${EndpointUpdateLambda}",
+      "Type": "Task",
+      "Next": "Wait for Performance Comparison",
+      "InputPath": "$",
+      "ResultPath": "$.endpoint_update"
+    },
+    "Wait for Performance Comparison": {
+      "Type": "Wait",
+      "SecondsPath": "$.wait_seconds",
+      "Next": "Performance Comparison"
+    },
+    "Performance Comparison": {
+      "Resource": "${ComparisonLambda}",
+      "Type": "Task",
+      "Next": "Manual Approval",
+      "InputPath": "$",
+      "ResultPath": "$.performance_comparison"
+    },
+    "Manual Approval": {  
+      "Type":"Task",
+      "Resource":"arn:aws:states:::states:startExecution.sync",
+      "Parameters":{  
+         "Input":{
+           "Comment": "Automatically triggered by shadow model deployment state machine",
+           "AWS_STEP_FUNCTIONS_STARTED_BY_EXECUTION_ID.$": "$$.Execution.Id",
+           "performance_comparison.$": "$.performance_comparison"
+          },
+         "StateMachineArn":"${ManualApprovalStateMachine}",
+         "Name.$":"States.Format('ManualApproval-{}', $$.Execution.Name)"
+      },
+      "ResultPath": "$.is_shadow_selected",
+      "Next": "Performance Choice"
+   },
+    "Performance Choice":{
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.is_shadow_selected.Output",
+          "StringMatches": "{\"is_shadow_selected\":true}",
+          "Next": "Shadow is Selected"
+        },
+        {
+          "Variable": "$.is_shadow_selected.Output",
+          "StringMatches": "{\"is_shadow_selected\":false}",
+          "Next": "Prod is Selected"
+        }
+      ],
+      "Default": "Fail"
+    },
+    "Shadow is Selected": {
+      "Resource": "${TrafficUpdateLambda}",
+      "Type": "Task",
+      "End": true,
+      "InputPath": "$",
+      "ResultPath": "$.is_shadow_selected"
+    },
+    "Prod is Selected": {
+      "Resource": "${TrafficUpdateLambda}",
+      "Type": "Task",
+      "End": true,
+      "InputPath": "$",
+      "ResultPath": "$.is_shadow_selected"
+    },
+    "Fail": {
+      "Type": "Fail"
+    }
+  }
+}    
