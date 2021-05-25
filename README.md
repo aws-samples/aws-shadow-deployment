@@ -65,7 +65,7 @@ Cons:
 
 - You will soon receive a SNS Topic Subscription Email with the [email address](#email) after the CodePipeline execution completed
 
-    ![SNS Subscription Image](inital_materials/pic/sns_subscribe.png)
+    ![SNS Subscription Image](inital_materials/pic/sns_subscription.png)
 
 ### Trigger Shadow Deployment Workflow
 
